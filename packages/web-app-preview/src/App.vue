@@ -185,7 +185,7 @@ const motionPlayer = useTemplateRef<{ isPlaying: boolean; toggle: () => void }>(
 const keyBindings: string[] = []
 let reloadUrlController: AbortController = null
 
-const { loadPreviewImage, cancelStaleLoads, preloadNeighbors } = useMediaFileLoader({
+const { loadPreviewImage, cancelLoadsOf, cancelStaleLoads, preloadNeighbors } = useMediaFileLoader({
   mediaFiles,
   activeIndex,
   getUrlForResource
@@ -240,7 +240,17 @@ const buildMediaFiles = () => {
   const sortFields = determineResourceTableSortFields(filteredFiles[0])
   const sortedFiles = sortHelper(filteredFiles, sortFields, unref(sortBy), unref(sortDir))
 
+  // the list is rebuilt from scratch on every resource update, so keep the load
+  // state of files that are still around. Their urls are blob urls holding the
+  // preview bytes, re-resolving them means downloading every file again.
+  const previousFiles = new Map(unref(mediaFiles).map((mediaFile) => [mediaFile.id, mediaFile]))
+
   mediaFiles.value = sortedFiles.map((file) => {
+    const previous = previousFiles.get(file.id)
+    // a file whose bytes changed underneath us must be loaded again, its url still
+    // points at the old revision
+    const url = previous?.url && previous.resource.etag === file.etag ? previous.url : undefined
+
     return {
       id: file.id,
       name: file.name,
@@ -250,11 +260,19 @@ const buildMediaFiles = () => {
       isImage: isFileTypeImage(file),
       isAudio: isFileTypeAudio(file),
       isMotionPhoto: isFileTypeImage(file) && !isEmpty(file.motionPhoto),
-      isLoading: true,
+      url,
+      isLoading: !url,
       isError: false,
       resource: file
     }
   })
+
+  // files that dropped out of the list can't be displayed anymore, free their urls
+  const currentIds = new Set(mediaFiles.value.map(({ id }) => id))
+  const removedFiles = [...previousFiles.values()].filter(({ id }) => !currentIds.has(id))
+  removedFiles.forEach(({ url }) => url && revokeUrl(url))
+  // an in-flight load for a removed file would resolve into a url nobody revokes
+  cancelLoadsOf(removedFiles)
 }
 
 const activeMediaFile = computed(() => {

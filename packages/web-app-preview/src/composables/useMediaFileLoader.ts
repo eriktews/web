@@ -195,6 +195,11 @@ export const useMediaFileLoader = ({
     })
   }
 
+  /** Abort the in-flight loads of specific files, e.g. ones that dropped out of the list. */
+  const cancelLoadsOf = (files: MediaFile[]) => {
+    files.forEach((mediaFile) => controllers.get(mediaFile)?.abort())
+  }
+
   /**
    * Load the files next to the active one so navigating to them is instant. The backward
    * neighbor follows the forward one, it shouldn't compete with the file the user is most
@@ -244,6 +249,7 @@ export const useMediaFileLoader = ({
   onBeforeUnmount(cancelAllLoads)
 
   return {
+    cancelLoadsOf,
     cancelStaleLoads,
     loadPreviewImage,
     preloadNeighbors

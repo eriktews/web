@@ -397,6 +397,37 @@ describe('useMediaFileLoader', () => {
       expect(signalsOf(mocks).every((signal) => !signal.aborted)).toBe(true)
       wrapper.unmount()
     })
+
+    it('aborts only the given files', async () => {
+      const { wrapper, loader, mocks, mediaFiles } = createWrapper({
+        files: createFiles([{ name: 'a.png' }, { name: 'b.png' }]),
+        activeIndex: 0
+      })
+      mocks.$previewService.loadPreview.mockImplementation(() => new Promise(() => undefined))
+
+      const [first, second] = unref(mediaFiles)
+      loader.loadPreviewImage(first)
+      loader.loadPreviewImage(second)
+      await flushPromises()
+      loader.cancelLoadsOf([second])
+
+      expect(signalsOf(mocks).map((signal) => signal.aborted)).toEqual([false, true])
+      wrapper.unmount()
+    })
+
+    it('ignores files that have no request in flight', async () => {
+      const { wrapper, loader, mocks, mediaFiles } = createWrapper({
+        files: createFiles([{ name: 'a.png' }, { name: 'b.png' }]),
+        activeIndex: 0
+      })
+
+      loader.loadPreviewImage(unref(mediaFiles)[0])
+      await flushPromises()
+      expect(() => loader.cancelLoadsOf([createFile({ name: 'unrelated.png' })])).not.toThrow()
+
+      expect(signalsOf(mocks).map((signal) => signal.aborted)).toEqual([false])
+      wrapper.unmount()
+    })
   })
 
   describe('unmount', () => {

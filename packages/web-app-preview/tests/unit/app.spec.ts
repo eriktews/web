@@ -14,88 +14,43 @@ vi.mock('@opencloud-eu/web-pkg', async (importOriginal) => ({
   createFileRouteOptions: vi.fn(() => ({ params: {}, query: {} }))
 }))
 
-const activeFiles = [
-  {
-    id: '1',
-    fileId: '1',
-    name: 'bear.png',
-    mimeType: 'image/png',
-    path: 'personal/admin/bear.png',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '2',
-    fileId: '2',
-    name: 'elephant.png',
-    mimeType: 'image/png',
-    path: 'personal/admin/elephant.png',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '3',
-    fileId: '3',
-    name: 'wale_sounds.flac',
-    mimeType: 'audio/flac',
-    path: 'personal/admin/wale_sounds.flac',
-    hidden: true,
-    canDownload: () => true
-  },
-  {
-    id: '4',
-    fileId: '4',
-    name: 'lonely_sloth_very_sad.gif',
-    mimeType: 'image/gif',
-    path: 'personal/admin/lonely_sloth_very_sad.gif',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '5',
-    fileId: '5',
-    name: 'tiger_eats_plants.mp4',
-    mimeType: 'video/mp4',
-    path: 'personal/admin/tiger_eats_plants.mp4',
-    hidden: true,
-    canDownload: () => true
-  },
-  {
-    id: '6',
-    fileId: '6',
-    name: 'happy_hippo.gif',
-    mimeType: 'image/gif',
-    path: 'personal/admin/happy_hippo.gif',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '7',
-    fileId: '7',
-    name: 'sleeping_dog.gif',
-    mimeType: 'image/gif',
-    path: 'personal/admin/sleeping_dog.gif',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '8',
-    fileId: '8',
-    name: 'cat_murr_murr.gif',
-    mimeType: 'image/gif',
-    path: 'personal/admin/cat_murr_murr.gif',
-    hidden: false,
-    canDownload: () => true
-  },
-  {
-    id: '9',
-    fileId: '9',
-    name: 'labrador.gif',
-    mimeType: 'image/gif',
-    path: 'personal/admin/labrador.gif',
-    hidden: false,
-    canDownload: () => true
-  }
+type TestResource = {
+  id: string
+  fileId: string
+  name: string
+  mimeType: string
+  path: string
+  etag: string
+  hidden: boolean
+  canDownload: () => boolean
+}
+
+const testResource = (
+  id: string,
+  name: string,
+  mimeType: string,
+  { hidden = false }: { hidden?: boolean } = {}
+): TestResource => ({
+  id,
+  fileId: id,
+  name,
+  mimeType,
+  path: `personal/admin/${name}`,
+  etag: `etag-${name}`,
+  hidden,
+  canDownload: () => true
+})
+
+const activeFiles: TestResource[] = [
+  testResource('1', 'bear.png', 'image/png'),
+  testResource('2', 'elephant.png', 'image/png'),
+  testResource('3', 'wale_sounds.flac', 'audio/flac', { hidden: true }),
+  testResource('4', 'lonely_sloth_very_sad.gif', 'image/gif'),
+  testResource('5', 'tiger_eats_plants.mp4', 'video/mp4', { hidden: true }),
+  testResource('6', 'happy_hippo.gif', 'image/gif'),
+  testResource('7', 'sleeping_dog.gif', 'image/gif'),
+  testResource('8', 'cat_murr_murr.gif', 'image/gif'),
+  testResource('9', 'labrador.gif', 'image/gif')
 ]
 
 // visible files: bear.png, elephant.png, lonely_sloth_very_sad.gif, happy_hippo.gif,
@@ -256,10 +211,76 @@ describe('Preview app', () => {
       expect((wrapper.vm as any).mediaFiles.length).toStrictEqual(2)
     })
   })
+  describe('Rebuilding "mediaFiles"', () => {
+    it('keeps the resolved urls of files that are still in the list', async () => {
+      const { wrapper, mocks, setActiveFiles } = createShallowMountWrapper()
+      await flushPromises()
+      const urlsBefore = urlsByName(wrapper)
+      mocks.$previewService.loadPreview.mockClear()
+
+      // the store hands out a new array with new resource objects on updates
+      setActiveFiles([{ ...activeFiles[0], name: 'bear_renamed.png' }, ...activeFiles.slice(1)])
+      await flushPromises()
+
+      const { 'bear.png': renamedFrom, ...urlsOfRemainingFiles } = urlsBefore
+      expect(urlsByName(wrapper)).toEqual({
+        ...urlsOfRemainingFiles,
+        'bear_renamed.png': renamedFrom
+      })
+      // the url survives the rebuild, so nothing is downloaded again
+      expect(requestedNames(mocks)).toEqual([])
+    })
+
+    it('reloads a file whose bytes changed', async () => {
+      const { mocks, setActiveFiles } = createShallowMountWrapper()
+      await flushPromises()
+      mocks.$previewService.loadPreview.mockClear()
+
+      setActiveFiles([{ ...activeFiles[0], etag: 'new-etag' }, ...activeFiles.slice(1)])
+      await flushPromises()
+
+      expect(requestedNames(mocks)).toEqual(['bear.png'])
+    })
+
+    it('revokes the urls of files that left the list', async () => {
+      const { revokeUrl, setActiveFiles } = createShallowMountWrapper()
+      await flushPromises()
+      revokeUrl.mockClear()
+
+      // bear.png is the only file left, the active file and its two preloaded
+      // neighbors are gone
+      setActiveFiles([activeFiles[0]])
+      await flushPromises()
+
+      expect(revokeUrl.mock.calls.map(([url]) => url).sort()).toEqual([
+        'blob:preview-cat_murr_murr.gif',
+        'blob:preview-sleeping_dog.gif'
+      ])
+    })
+
+    it('does not revoke the urls of files that stay', async () => {
+      const { revokeUrl, setActiveFiles } = createShallowMountWrapper()
+      await flushPromises()
+      revokeUrl.mockClear()
+
+      setActiveFiles([...activeFiles, { ...activeFiles[0], name: 'another_bear.png' }])
+      await flushPromises()
+
+      expect(revokeUrl).not.toHaveBeenCalledWith('blob:preview-bear.png')
+    })
+  })
 })
 
 const requestedNames = (mocks: ReturnType<typeof defaultComponentMocks>) =>
   mocks.$previewService.loadPreview.mock.calls.map(([{ resource }]) => resource.name)
+
+const urlsByName = (wrapper: VueWrapper) =>
+  Object.fromEntries(
+    (wrapper.vm as any).mediaFiles.map(({ name, url }: { name: string; url?: string }) => [
+      name,
+      url
+    ])
+  )
 
 function createShallowMountWrapper({
   currentFileContext
@@ -300,6 +321,8 @@ function createShallowMountWrapper({
     wrapper,
     mocks,
     getUrlForResource,
-    revokeUrl
+    revokeUrl,
+    // the store replaces the array whenever a resource in it is updated
+    setActiveFiles: (files: typeof activeFiles) => wrapper.setProps({ activeFiles: files })
   }
 }
